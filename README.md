@@ -2,12 +2,8 @@
 
 ![Whisper Groq](WhisperGroq.png)
 
-#### Most vibe coders aren’t willin to pay for tools like Whisprflow and frankly, I wasn’t going to pay for something I could get for free with the same precision.
-##### I made it pretty simple so anyone can build on top of it without restrictions - like giving it Agentic functions and allowing it to do local tasks. (Integration made easy and free)
-##### Groq was offering free and Unlimited API so i had to build somethin with it. ( As of today - 3 Feb 2026 - Groq's offerin free unlimited credits )
-
-
 This is a small cross-platform tool to press-and-hold a hotkey, record audio, send to Groq's Whisper model, and paste the transcription.
+Groq was offering free and Unlimited API so i had to build somethin with it. ( As of today - 3 Feb 2026 - Groq's offerin free unlimited credits )
 
 **Project files**: [app.py](app.py), [requirements.txt](requirements.txt), [.env.example](.env.example)
 
@@ -69,10 +65,14 @@ Contributing
 
 License
 - This project is released under the MIT license (see `LICENSE`).
+Dev Notes
+- I made it pretty simple so anyone can build on top of it without restrictions - like giving it Agentic functions and allowing it to do local tasks. (Integration made easy and free)
+- Since most vibe coders aren’t willin to pay for tools like Whisprflow and frankly, I wasn’t going to pay for something I could get for free with the same precision.
 
 Questions / FAQ
 - Q: Where is the transcription stored?
 - A: Audio files are written to a temporary file and removed after processing. Transcription text is copied to clipboard and pasted into the active window.
+
 
 
 
