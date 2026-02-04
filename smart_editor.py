@@ -76,9 +76,9 @@ _CLEAR_RE = re.compile(
 )
 _IGNORE_RE = re.compile(
     r"^(?:"
-    r"don['’]t include(?: that| this| it)?|"
+    r"don['']t include(?: that| this| it)?|"
     r"do not include(?: that| this| it)?|"
-    r"don['’]t add(?: that| this| it)?|"
+    r"don['']t add(?: that| this| it)?|"
     r"do not add(?: that| this| it)?|"
     r"ignore(?: that| this| it)?|"
     r"skip(?: that| this| it)?|"
@@ -88,6 +88,20 @@ _IGNORE_RE = re.compile(
     r"cancel that|"
     r"never ?mind(?: that| this| it)?"
     r")\b.*$",
+    re.IGNORECASE,
+)
+_IGNORE_TRAILING_RE = re.compile(
+    r"^(?P<before>.*?)\b(?:"
+    r"ignore(?: that| this| it)?|"
+    r"skip(?: that| this| it)?|"
+    r"disregard(?: that| this| it)?|"
+    r"omit(?: that| this| it)?|"
+    r"don't include(?: that| this| it)?|"
+    r"do not include(?: that| this| it)?|"
+    r"don't add(?: that| this| it)?|"
+    r"do not add(?: that| this| it)?|"
+    r"never ?mind(?: that| this| it)?"
+    r")\s*$",
     re.IGNORECASE,
 )
 _INLINE_CORRECTION_RE = re.compile(
@@ -350,6 +364,13 @@ def apply_heuristic(state: TranscriptState, utterance: str) -> Tuple[str, str]:
         state.output_text = ""
         return state.output_text, "clear"
 
+    trailing_ignore_match = _IGNORE_TRAILING_RE.match(command_text)
+    if trailing_ignore_match:
+        before = _normalize_spaces(trailing_ignore_match.group("before") or "")
+        if before:
+            return state.output_text, "ignore"
+        return state.output_text, "ignore"
+
     if _IGNORE_RE.match(command_text):
         return state.output_text, "ignore"
 
@@ -451,7 +472,8 @@ def _llm_updated_transcript(prev_output: str, utterance: str) -> Optional[Tuple[
         "Apply smart dictation behavior:\n"
         "- If utterance is a command (undo/delete/scratch/remove previous), modify transcript accordingly.\n"
         "- If utterance says clear/reset, return empty transcript with action clear.\n"
-        "- If utterance says don't include/ignore/skip/disregard/omit/never mind, keep transcript unchanged with action ignore.\n"
+        "- If utterance says don't include/ignore/skip/disregard/omit/never mind WITH the command at the END (e.g. 'hello world ignore'), ignore 'hello world' and keep transcript unchanged.\n"
+        "- If utterance says don't include/ignore/skip/disregard/omit/never mind as the ONLY content (e.g. 'ignore'), keep transcript unchanged with action ignore.\n"
         "- Otherwise append a cleaned-up version of the utterance.\n"
         "- Remove obvious disfluencies and repeated hesitation words when they don't add meaning.\n"
         "- Improve punctuation with commas, full stops, question marks, and exclamation marks where natural.\n"
