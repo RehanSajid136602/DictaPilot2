@@ -1,6 +1,6 @@
 # DictaPilot
 
-![DictaPilot](WhisperGroq.png)
+![DictaPilot](Dictepilot.png)
 
 DictaPilot is a cross-platform press-and-hold dictation app. Hold a hotkey to record, transcribe with Groq Whisper, and paste directly into your focused text field with smart dictation edits.
 
