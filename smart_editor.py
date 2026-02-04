@@ -74,6 +74,10 @@ _CLEAR_RE = re.compile(
     r"^(?:clear all|clear everything|reset(?: all)?|start over|wipe all|wipe everything|erase all)\b[\s,.!?:;-]*$",
     re.IGNORECASE,
 )
+_CLEAR_SIMPLE_RE = re.compile(
+    r"^(?:clear|reset|wipe)\b[\s,.!?:;-]*$",
+    re.IGNORECASE,
+)
 _IGNORE_RE = re.compile(
     r"^(?:"
     r"don['']t include(?: that| this| it)?|"
@@ -126,6 +130,10 @@ _FILLER_WORD_RE = re.compile(r"\b(?:uh+|um+|erm+|ah+|hmm+|mm+)\b", re.IGNORECASE
 _FILLER_PHRASE_RE = re.compile(r"\b(?:you know|i mean|kind of|sort of)\b", re.IGNORECASE)
 _REPEATED_WORD_RE = re.compile(r"\b(?P<word>[A-Za-z][A-Za-z0-9']*)\b(?:\s+(?P=word)\b)+", re.IGNORECASE)
 _REPEATED_PUNCT_RE = re.compile(r"([,.;:!?])\1+")
+_REPLACE_RE = re.compile(
+    r"^(?:replace|change|swap)\s+(?P<target>.+?)\s+(?:with|to|for)\s+(?P<replacement>.+)$",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -349,7 +357,62 @@ def _apply_inline_corrections(text: str) -> str:
 
 def needs_intent_handling(utterance: str) -> bool:
     lowered = _normalize_spaces(utterance).lower()
-    return any(keyword in lowered for keyword in COMMAND_KEYWORDS)
+    
+    if not lowered:
+        return False
+    
+    command_text = _strip_command_preface(lowered)
+    
+    ignore_keywords = {"ignore", "skip", "disregard", "omit", "don't include", "do not include", 
+                       "don't add", "do not add", "never mind", "cancel"}
+    
+    if any(kw in command_text for kw in ignore_keywords):
+        return True
+    
+    clear_keywords = {"clear", "reset", "wipe", "erase", "start over"}
+    if any(kw in command_text for kw in clear_keywords):
+        return True
+    
+    undo_keywords = {"delete", "undo", "scratch", "remove", "erase", "drop", "take that out"}
+    if any(kw in command_text for kw in undo_keywords):
+        return True
+    
+    return False
+
+
+def _handle_replace_pattern(state: TranscriptState, target: str, replacement: str) -> Tuple[str, str]:
+    target_cleaned = _normalize_spaces(target)
+    replacement_cleaned = _normalize_segment(replacement)
+    
+    if not target_cleaned or not state.output_text:
+        return state.output_text, "ignore"
+    
+    new_output = _replace_last_case_insensitive(state.output_text, target_cleaned, replacement_cleaned)
+    
+    if new_output != state.output_text:
+        state.output_text = new_output
+        state.segments = [new_output] if new_output else []
+        return state.output_text, "undo_append"
+    
+    return state.output_text, "ignore"
+
+
+def _handle_delete_specific(state: TranscriptState, target: str) -> Tuple[str, str]:
+    target_cleaned = _normalize_spaces(target)
+    
+    if not target_cleaned or not state.output_text:
+        return state.output_text, "ignore"
+    
+    pattern = re.compile(rf"\b{re.escape(target_cleaned)}\b", re.IGNORECASE)
+    new_output = pattern.sub("", state.output_text)
+    new_output = re.sub(r"\s+", " ", new_output).strip()
+    
+    if new_output != state.output_text:
+        state.output_text = new_output
+        state.segments = [new_output] if new_output else []
+        return state.output_text, "undo"
+    
+    return state.output_text, "ignore"
 
 
 def apply_heuristic(state: TranscriptState, utterance: str) -> Tuple[str, str]:
@@ -359,10 +422,16 @@ def apply_heuristic(state: TranscriptState, utterance: str) -> Tuple[str, str]:
 
     command_text = _strip_command_preface(raw)
 
-    if _CLEAR_RE.match(command_text):
+    if _CLEAR_RE.match(command_text) or _CLEAR_SIMPLE_RE.match(command_text):
         state.segments.clear()
         state.output_text = ""
         return state.output_text, "clear"
+
+    replace_match = _REPLACE_RE.match(command_text)
+    if replace_match:
+        target = _normalize_spaces(replace_match.group("target") or "")
+        replacement = _normalize_spaces(replace_match.group("replacement") or "")
+        return _handle_replace_pattern(state, target, replacement)
 
     trailing_ignore_match = _IGNORE_TRAILING_RE.match(command_text)
     if trailing_ignore_match:
@@ -434,15 +503,31 @@ def _extract_json_object(raw: str) -> Optional[dict]:
 
 
 def _normalize_llm_result(prev_output: str, updated: str, action: str) -> Tuple[str, str]:
-    normalized_output = _polish_punctuation(_cleanup_disfluencies(updated or ""))
     normalized_action = _normalize_spaces(action or "").lower()
+    
     if normalized_action not in VALID_ACTIONS:
-        normalized_action = "append" if normalized_output != prev_output else "ignore"
+        if prev_output != updated:
+            normalized_action = "append"
+        else:
+            normalized_action = "ignore"
+    
     if normalized_action == "clear":
-        normalized_output = ""
+        return "", "clear"
+    
     if normalized_action == "ignore":
-        normalized_output = prev_output
-    return normalized_output, normalized_action
+        return prev_output, "ignore"
+    
+    if normalized_action in {"undo", "undo_append"}:
+        if not updated:
+            return "", normalized_action
+        return updated, normalized_action
+    
+    normalized_output = _polish_punctuation(_cleanup_disfluencies(updated or ""))
+    
+    if normalized_output != prev_output:
+        return normalized_output, "append"
+    
+    return prev_output, "ignore"
 
 
 def _llm_updated_transcript(prev_output: str, utterance: str) -> Optional[Tuple[str, str]]:
@@ -459,25 +544,41 @@ def _llm_updated_transcript(prev_output: str, utterance: str) -> Optional[Tuple[
     client = Groq(api_key=api_key)
 
     system_prompt = (
-        "You are DictaPilot Smart Editor. "
-        "Convert raw speech transcription into clean final text and apply voice-edit commands. "
+        "You are DictaPilot Smart Editor - a precise voice dictation assistant. "
+        "Your goal is to convert raw speech into clean, polished text while respecting user commands. "
         "Return JSON only with keys: updated_transcript, action. "
         "Valid actions: append, undo, undo_append, clear, ignore. "
-        "Rules: remove filler words and stutters, remove obvious repetition, keep meaning intact, preserve names/technical terms, "
-        "apply self-corrections (e.g. 'actually', 'no not X use Y'), and produce polished punctuation."
+        "Core rules:"
+        "- Remove filler words (uh, um, you know, i mean) and repeated words"
+        "- Apply proper punctuation (capitalization, periods, commas)"
+        "- Preserve names, technical terms, and important content"
+        "- Handle self-corrections intelligently (e.g., 'no not X use Y')"
+        "- For undo commands, remove the last added content"
+        "- For clear commands, return empty transcript with action 'clear'"
+        "- For ignore commands, keep transcript unchanged"
+        "- For 'X ignore' or 'ignore X' patterns, discard X and keep transcript unchanged"
     )
     user_prompt = (
-        f"Current transcript:\n{prev_output}\n\n"
-        f"New utterance:\n{utterance}\n\n"
+        f"Current transcript:\n---\n{prev_output}\n---\n\n"
+        f"New utterance:\n---\n{utterance}\n---\n\n"
         "Apply smart dictation behavior:\n"
-        "- If utterance is a command (undo/delete/scratch/remove previous), modify transcript accordingly.\n"
-        "- If utterance says clear/reset, return empty transcript with action clear.\n"
-        "- If utterance says don't include/ignore/skip/disregard/omit/never mind WITH the command at the END (e.g. 'hello world ignore'), ignore 'hello world' and keep transcript unchanged.\n"
-        "- If utterance says don't include/ignore/skip/disregard/omit/never mind as the ONLY content (e.g. 'ignore'), keep transcript unchanged with action ignore.\n"
-        "- Otherwise append a cleaned-up version of the utterance.\n"
-        "- Remove obvious disfluencies and repeated hesitation words when they don't add meaning.\n"
-        "- Improve punctuation with commas, full stops, question marks, and exclamation marks where natural.\n"
-        "- updated_transcript must be the FULL final transcript after applying this utterance."
+        "1. COMMANDS - Handle these first:\n"
+        "   - undo/delete/scratch/remove previous: Remove last segment from transcript\n"
+        "   - clear/reset/start over: Return EMPTY transcript with action 'clear'\n"
+        "   - ignore/skip/disregard/don't include: Keep transcript UNCHANGED\n"
+        "   - 'X ignore' or 'ignore X' patterns: Discard X, keep transcript unchanged\n"
+        "   - 'delete X' where X is specific text: Remove X from transcript\n"
+        "   - 'replace X with Y': Replace X with Y in transcript\n\n"
+        "2. CONTENT - If not a command:\n"
+        "   - Clean up disfluencies (uh, um, repeated words)\n"
+        "   - Add proper punctuation\n"
+        "   - Append cleaned text to transcript\n\n"
+        "3. OUTPUT:\n"
+        "   - updated_transcript: FULL final transcript after applying this utterance\n"
+        "   - action: One of append, undo, undo_append, clear, ignore\n"
+        "   - If ignoring, updated_transcript should equal the previous transcript\n"
+        "   - If clearing, updated_transcript should be empty string\n"
+        "   - For undo/undo_append, include the remaining transcript after removal\n"
     )
 
     try:
