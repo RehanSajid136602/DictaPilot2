@@ -19,3 +19,35 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+## How to Use and Modify
+
+You are free to:
+- Use this software for any purpose
+- Modify the source code
+- Distribute modified versions
+- Commercial use
+
+Under the following conditions:
+- You must retain the original copyright notice
+- Modified versions must clearly indicate changes
+- Include this same license with any redistributions
+
+## Third-Party Licenses
+
+This project uses the following third-party libraries (see requirements.txt):
+- Groq SDK - MIT License
+- sounddevice - BSD License
+- soundfile - BSD License
+- numpy - BSD License
+- keyboard - MIT License
+- pyperclip - BSD/MIT License
+- python-dotenv - MIT License
+- pynput - LGPL-3.0 License
+- pystray - LGPL-3.0 License
+- Pillow - BSD License
+- pyinstaller - GPL License with commercial exception
+
+See individual library licenses in their respective documentation.

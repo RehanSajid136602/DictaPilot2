@@ -99,6 +99,51 @@ Provides:
 
 ---
 
+## Transcription Storage
+
+All transcriptions are automatically saved to a JSON file for easy access and reuse.
+
+### Storage Locations
+
+| Platform | Path |
+|----------|------|
+| Linux | `~/.local/share/dictapilot/transcriptions.json` |
+| macOS | `~/.local/share/dictapilot/transcriptions.json` |
+| Windows | `%APPDATA%\DictaPilot\transcriptions.json` |
+
+### Command-Line Tools
+
+```bash
+# List recent transcriptions (default: 20)
+python app.py --list
+
+# Show transcription statistics
+python app.py --stats
+
+# Search transcriptions
+python app.py --search "hello"
+
+# Export all transcriptions to a text file
+python app.py --export my_transcriptions.txt
+```
+
+### Stored Data
+
+Each entry includes:
+- Timestamp (ISO format)
+- Original transcribed text
+- Processed text (after smart editing)
+- Action taken (append, replace, clear, ignore)
+- Word count
+- Unique session ID
+
+### Export Formats
+
+- **JSON**: Full data with metadata (`transcriptions.json`)
+- **Text**: Plain text for easy reuse (`--export`)
+
+---
+
 ## Smart Dictation Commands
 
 | Command | Action |
@@ -217,19 +262,39 @@ Or build .deb package:
 
 ---
 
+## License
+
+MIT License - See [LICENSE](LICENSE) for full details.
+
+### You Are Free To:
+- Use this software for any purpose
+- Modify the source code
+- Distribute modified versions
+- Commercial use
+
+### Under These Conditions:
+- You must retain the original copyright notice
+- Modified versions must clearly indicate changes
+- Include this same license with any redistributions
+
+---
+
 ## Project Structure
 
 ```
 DictaPilot/
-├── app.py              # Main entrypoint
-├── smart_editor.py     # Smart dictation logic
-├── paste_utils.py      # Cross-platform text injection
-├── x11_backend.py      # Linux X11 input
-├── requirements.txt    # Python dependencies
-├── docs/               # Demo media
+├── app.py                  # Main entrypoint
+├── smart_editor.py         # Smart dictation logic
+├── transcription_store.py  # Transcription storage & retrieval
+├── paste_utils.py          # Cross-platform text injection
+├── x11_backend.py          # Linux X11 input
+├── config.py               # Configuration management
+├── tray.py                 # System tray interface
+├── requirements.txt        # Python dependencies
+├── docs/                   # Demo media
 │   ├── demo.gif
 │   └── demo.mp4
-├── packaging/          # Build scripts
+├── packaging/              # Build scripts
 │   ├── DictaPilot.spec
 │   ├── build_windows.ps1
 │   ├── build_macos.sh

@@ -1,9 +1,35 @@
+"""
+DictaPilot - Cross-platform press-and-hold dictation with smart editing.
+
+MIT License
+Copyright (c) 2026 Rehan
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+
 import os
 import threading
 import tempfile
 import queue
 import time
 import sys
+from pathlib import Path
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
@@ -13,6 +39,7 @@ from tkinter import font as tkfont
 from dotenv import load_dotenv
 from paste_utils import paste_text
 from smart_editor import TranscriptState, smart_update_state
+from transcription_store import add_transcription, get_storage_info, export_all_to_text
 
 # load environment variables from .env (if present)
 load_dotenv()
@@ -451,12 +478,12 @@ class GUIManager:
 def main():
     def print_banner(hotkey: str):
         banner = r"""
- __        ___     _                      ____                  
- \ \      / / |__ (_)___ _ __   ___ _ __ / ___|_ __ ___   __ _  
-  \ \ /\ / /| '_ \| / __| '_ \ / _ \ '__| |  _| '__/ _ \ / _` | 
-   \ V  V / | | | | \__ \ |_) |  __/ |  | |_| | | | (_) | (_| | 
-    \_/\_/  |_| |_|_|___/ .__/ \___|_|   \____|_|  \___/ \__, | 
-                        |_|                                 |_| 
+  __        ___     _                      ____
+  \ \      / / |__ (_)___ _ __   ___ _ __ / ___|_ __ ___   __ _
+   \ \ /\ / /| '_ \| / __| '_ \ / _ \ '__| |  _| '__/ _ \ / _` |
+    \ V  V / | | | | \__ \ |_) |  __/ |  | |_| | | | (_) | (_| |
+     \_/\_/  |_| |_|_|___/ .__/ \___|_|   \____|_|  \___/ \__, |
+                         |_|                                 |_|
 """
         print(banner)
         print("DictaPilot")
@@ -477,6 +504,13 @@ def main():
             print("Transcript reset mode: per recording")
         elif SMART_EDIT:
             print("Transcript reset mode: session (keeps previous recordings)")
+
+        try:
+            storage_info = get_storage_info()
+            print(f"Transcription storage: {storage_info['storage_path']}")
+            print(f"Total transcriptions: {storage_info['statistics']['total_transcriptions']}")
+        except Exception:
+            pass
         print("")
 
     print_banner(HOTKEY)
@@ -543,6 +577,10 @@ def main():
                     prev_out, new_out, action = smart_update_state(transcript_state, text, SMART_MODE)
                     print(f"Smart action: {action}")
                     print("Updated transcript:\n", new_out if new_out else "(empty)")
+
+                # Save transcription to storage
+                add_transcription(text, new_out, action)
+                print(f"Transcription saved to storage")
 
                 # copy to clipboard (prefer pyperclip, fallback to tkinter clipboard)
                 try:
@@ -643,4 +681,56 @@ def main():
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="DictaPilot - Press-and-hold dictation")
+    parser.add_argument("--tray", action="store_true", help="Run with system tray")
+    parser.add_argument("--export", type=str, metavar="FILE", help="Export all transcriptions to a text file")
+    parser.add_argument("--list", action="store_true", help="List recent transcriptions")
+    parser.add_argument("--stats", action="store_true", help="Show transcription statistics")
+    parser.add_argument("--search", type=str, metavar="QUERY", help="Search transcriptions")
+    args = parser.parse_args()
+
+    if args.export:
+        from transcription_store import export_all_to_text
+        path = Path(args.export)
+        content = export_all_to_text(path, include_metadata=True)
+        print(f"Exported to: {path}")
+        print(f"Content preview:\n{content[:500]}...")
+        sys.exit(0)
+
+    if args.list:
+        from transcription_store import get_transcriptions
+        entries = get_transcriptions(20)
+        print("Recent Transcriptions:")
+        print("-" * 60)
+        for i, entry in enumerate(entries, 1):
+            print(f"{i}. [{entry.timestamp[:19]}] {entry.display_text[:80]}")
+            if len(entry.display_text) > 80:
+                print(f"   ... ({entry.word_count} words, action: {entry.action})")
+        sys.exit(0)
+
+    if args.stats:
+        from transcription_store import get_storage_info
+        info = get_storage_info()
+        print("Transcription Storage Statistics")
+        print("-" * 40)
+        print(f"Storage location: {info['storage_path']}")
+        stats = info['statistics']
+        print(f"Total transcriptions: {stats['total_transcriptions']}")
+        print(f"Total words: {stats['total_words']}")
+        print(f"Total characters: {stats['total_characters']}")
+        print(f"Action breakdown: {stats['action_breakdown']}")
+        sys.exit(0)
+
+    if args.search:
+        from transcription_store import search_transcriptions
+        results = search_transcriptions(args.search)
+        print(f"Search results for '{args.search}':")
+        print("-" * 60)
+        for entry in results:
+            print(f"[{entry.timestamp[:19]}] {entry.display_text[:100]}")
+        print(f"Found {len(results)} matching transcriptions")
+        sys.exit(0)
+
     main()
