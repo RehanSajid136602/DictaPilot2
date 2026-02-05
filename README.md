@@ -2,154 +2,279 @@
 
 ![DictaPilot](Dictepilot.png)
 
-DictaPilot is a cross-platform press-and-hold dictation app. Hold a hotkey to record, transcribe with Groq Whisper, and paste directly into your focused text field with smart dictation edits.
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Platform: Windows | macOS | Linux](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgray.svg)
 
-**Part of the BridgeMind Vibeathon**
-**Developer**: Rehan
+**Cross-platform press-and-hold dictation with smart editing.** Hold a hotkey to record, transcribe with Groq Whisper, and paste directly into your focused text field with intelligent voice commands.
 
-**Project files**: [app.py](app.py), [requirements.txt](requirements.txt), [.env.example](.env.example)
+## Features
 
-**Quick summary**
-- **App model used (Groq)**: `whisper-large-v3-turbo`
-- **Required env var**: `GROQ_API_KEY`
-- **Hotkey**: configurable via `HOTKEY` (default `f9`)
-- **Smart dictation**: on by default (`SMART_EDIT=1`)
-- **Cleanup mode**: LLM-first by default (`SMART_MODE=llm`, `LLM_ALWAYS_CLEAN=1`)
-- **Text polish**: removes filler/repetition and improves punctuation automatically
+- **Press-and-hold recording** — Simple F9 (default) hotkey workflow
+- **Smart dictation commands** — "delete that", "clear all", "ignore", "replace X with Y"
+- **Delta paste** — Types only changes; backs up when transcript shrinks
+- **Terminal-first** — Lightweight, fast startup, no heavy UI
+- **Cross-platform** — Windows, macOS, Linux with auto backend selection
+- **Groq-powered** — Fast transcription with whisper-large-v3-turbo
 
-Getting started (macOS / Linux / Windows)
+---
 
-1) Clone the repo and open a terminal in the project folder.
+## Demo (10–20 sec)
 
-2) Create and activate a Python virtual environment
+![DictaPilot Demo](docs/demo.gif)
 
-macOS / Linux:
+**[Watch video version →](docs/demo.mp4)**
+
+**Demo flow:**
+1. Hold `F9` to record
+2. Release to transcribe and paste
+3. Say `"hello world"` → text appears
+4. Say `"delete that"` → last segment removed
+5. Say `"clear all"` → transcript cleared
+
+---
+
+## Why DictaPilot (vs WhisperFlow-style tools)
+
+| Feature | DictaPilot | Typical WhisperFlow Tools |
+|---------|------------|--------------------------|
+| **Spoken command handling** | Commands like "delete that" work directly — no need to type them | Often requires manual editing |
+| **Delta paste** | Only types changes; backs up when content is removed | Usually replaces entire text |
+| **Terminal-first** | Lightweight, fast start, minimal dependencies | Often ships heavy Electron/GUI apps |
+| **Config via env vars** | Simple `GROQ_API_KEY`, `HOTKEY`, etc. | May require GUI settings or config files |
+| **No cloud lock-in** | Runs locally with your Groq API key | Some tools require proprietary services |
+
+> **Disclaimer:** DictaPilot is not affiliated with WhisperFlow. Comparison is provided for user clarity and reflects typical tool differences.
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.10+
+- Groq API key ([get one here](https://console.groq.com))
+- Microphone access
+
+### Installation
+
 ```bash
+# Clone and enter directory
+git clone https://github.com/RehanSajid136602/DictaPilot.git
+cd DictaPilot
+
+# Create virtual environment
 python3 -m venv venv
-source venv/bin/activate
-```
+source venv/bin/activate   # Linux/macOS
+# or: .\venv\Scripts\Activate.ps1  (Windows PowerShell)
 
-Windows (PowerShell):
-```powershell
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-```
-
-3) Install dependencies
-```bash
+# Install dependencies
 pip install -r requirements.txt
+
+# Configure API key
+cp .env.example .env
+# Edit .env and add: GROQ_API_KEY=your_key_here
 ```
 
-4) Create a `.env` file from `.env.example` and add your GROQ_API_KEY
-```bash
-cp .env.example .env    # macOS / Linux
-# or copy the file in Explorer on Windows, then edit
-```
-Edit `.env` and set `GROQ_API_KEY` to your Groq API key.
+### Running
 
-5) Run the app
 ```bash
 python app.py
 ```
-Then press-and-hold the configured hotkey (default `f9`) to record; release to send the audio to Groq and paste the transcription into the focused app.
 
-Smart dictation commands
-- `delete that`, `delete previous`, `undo`, `scratch that`, `remove that`, `remove previous`, `erase that`, `take that out`: undo the last committed segment.
-- `clear all`, `clear everything`, `reset`, `start over`: clear the whole transcript state.
-- `don't include that`, `do not include`, `don't add that`, `ignore that`, `ignore it`, `skip that`, `disregard that`, `omit that`, `never mind`: ignore this utterance and keep current transcript unchanged.
-- `delete that ... <new content>`: undo last segment, then append the remainder.
-- Inline self-correction in one utterance is handled conservatively (example: `My name is Rehan. No, no, my name is Numan` keeps only the corrected clause).
+Press and hold `F9` (default) to record. Release to transcribe and paste.
 
-Examples
-- Say: `Hello world.` -> transcript appends as normal.
-- Say: `oh no delete that` -> removes the previous segment.
-- Say: `delete that and write: Hello again` -> removes previous segment, then appends `Hello again`.
-- Say: `don't include that` -> no transcript change.
-- Say: `clear all` -> transcript becomes empty.
+### Tray Mode (Optional)
 
-Environment variables
-- `GROQ_API_KEY` (required): your Groq API key.
-- `HOTKEY` (optional): hold-to-record key (default `f9`).
-- `SMART_EDIT` (optional): `1` or `0` (default `1`).
-- `SMART_MODE` (optional): `heuristic` or `llm` (default `llm`).
-- `LLM_ALWAYS_CLEAN` (optional): in llm mode, clean every utterance (`1`) or only likely command edits (`0`) (default `1`).
-- `PASTE_MODE` (optional): `delta` or `full` (default `delta`).
-- `PASTE_BACKEND` (optional): `auto`, `x11`, `keyboard`, `pynput`, `xdotool`, `osascript` (default `auto`).
-- `HOTKEY_BACKEND` (optional): `auto`, `x11`, `pynput`, `keyboard` (default `auto`).
-- `RESET_TRANSCRIPT_EACH_RECORDING` (optional): `1` resets smart transcript on each hotkey press; `0` keeps session history (default `1`).
-- `GROQ_WHISPER_MODEL` (optional): speech-to-text model (default `whisper-large-v3-turbo`).
-- `GROQ_CHAT_MODEL` (optional): cleanup/intent model when `SMART_MODE=llm` (default `openai/gpt-oss-120b`).
+Run with system tray for quick access:
 
-Quality tuning (Whisper Flow style)
-- Use:
 ```bash
-SMART_MODE=llm
-LLM_ALWAYS_CLEAN=1
-GROQ_CHAT_MODEL=openai/gpt-oss-120b
-GROQ_WHISPER_MODEL=whisper-large-v3-turbo
+python app.py --tray
 ```
-- `openai/gpt-oss-120b` is default for cleaner formatting and better self-corrections.
-- `openai/gpt-oss-20b` is faster/cheaper but usually less consistent on cleanup quality.
 
-Paste behavior
-- `PASTE_MODE=delta` (default): only types the diff from previous transcript.
-- If transcript shrinks (undo/clear), app sends backspaces for removed characters.
-- If transcript grows, app pastes only the inserted characters.
-- `PASTE_MODE=full`: select all (`Ctrl+A`) then paste full transcript.
-- Linux fallback: app auto-tries native X11 injection first, then other backends.
+Provides:
+- Start/Stop dictation toggle
+- Open Settings
+- Quit
 
-Linux troubleshooting
-- Run as your normal user first. Avoid `sudo` for desktop hotkey/paste workflows.
-- If needed, install `xdotool` (`sudo apt install xdotool`) to improve paste/key injection fallback.
-- If hotkey capture is unstable, force `HOTKEY_BACKEND=x11`.
-- If paste is unstable, force `PASTE_BACKEND=x11` or `PASTE_BACKEND=xdotool`.
+---
 
-macOS troubleshooting
-- Give Terminal accessibility permissions (System Settings -> Privacy & Security -> Accessibility and Input Monitoring).
-- Auto mode prefers `pynput` for hotkeys and falls back to `keyboard`.
-- Paste can fall back to AppleScript by setting `PASTE_BACKEND=osascript`.
+## Smart Dictation Commands
 
-About Groq API keys
-- Visit https://www.groq.com (or the Groq developer console) to sign up and create an API key. Paste the key into your `.env` file as `GROQ_API_KEY`.
-- Check the Groq documentation and pricing pages for current free tier or trial availability — policies and pricing can change.
+| Command | Action |
+|---------|--------|
+| `delete that`, `undo`, `scratch that` | Remove last segment |
+| `clear all`, `reset`, `start over` | Clear entire transcript |
+| `ignore`, `skip`, `don't include` | Discard this utterance |
+| `hello world ignore` | Discard "hello world", keep transcript unchanged |
+| `replace X with Y` | Replace "X" with "Y" in transcript |
 
-Model and SDK
-- This app uses the Groq SDK package (`groq`) and requests the `whisper-large-v3-turbo` model (see `transcribe_with_groq` in `app.py`).
+Inline self-corrections are handled automatically (`"My name is Rehan. No, my name is Numan"` → keeps corrected clause).
 
-Notes and troubleshooting
-- If `sounddevice` fails to open your audio input: try selecting the correct input device or run with elevated permissions. See `sounddevice` docs.
-- On some systems the GUI popup transparency may not be supported — this is optional and won't break the core functionality.
-- If the `groq` package fails to import, ensure dependencies are installed and that your Python version is supported.
+---
 
-Contributing
-- See `DEVELOPERS.md` for developer instructions, extension points, and ways to add tools/agents.
+## Environment Variables
 
-License
-- This project is released under the MIT license (see `LICENSE`).
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `GROQ_API_KEY` | Yes | — | Your Groq API key |
+| `HOTKEY` | No | `f9` | Hold-to-record key |
+| `SMART_EDIT` | No | `1` | Enable smart editing (`1`/`0`) |
+| `SMART_MODE` | No | `llm` | `heuristic` or `llm` |
+| `LLM_ALWAYS_CLEAN` | No | `1` | Always clean (llm mode) |
+| `PASTE_MODE` | No | `delta` | `delta` (diff) or `full` |
+| `PASTE_BACKEND` | No | `auto` | Input backend |
+| `HOTKEY_BACKEND` | No | `auto` | Hotkey backend |
+| `GROQ_WHISPER_MODEL` | No | `whisper-large-v3-turbo` | Whisper model |
+| `GROQ_CHAT_MODEL` | No | `openai/gpt-oss-120b` | LLM cleanup model |
 
-Dev Notes
-- I made it pretty simple so anyone can build on top of it without restrictions - like giving it Agentic functions and allowing it to do local tasks. (Integration made easy and free)
-- Since most vibe coders aren't willing to pay for tools like Whisper Flow and frankly, I wasn't going to pay for something I could get for free with the same precision.
+---
 
-Testing
-- Install pytest as a dev dependency: `pip install pytest`
-- Run tests: `pytest -q`
+## Recording the Demo
 
-Questions / FAQ
-- Q: Where is the transcription stored?
-- A: Audio files are written to a temporary file and removed after processing. Transcription text is copied to clipboard and pasted into the active window.
+Create a 10–20 second demo GIF/MP4 for `docs/`:
 
+### Windows
+- **ScreenToGif** or **ShareX**
+- Record at 800–1100px width
+- Use readable terminal font (18–22px)
+- Crop tight to terminal window
 
+### macOS
+- **QuickTime Player** → File → New Screen Recording
+- Select area, record
+- Export as GIF via **gifski** or **CloudConvert**
 
+### Linux
+- **Peek**, **Kooha**, or **OBS**
+- Record selected region
+- Export as GIF
 
+**Target specs:** 10–20 sec, ~800px width, 15-20fps, tight crop
 
+---
 
+## Installation (Pre-built)
 
+### Windows
+1. Download `DictaPilot-windows-x64.zip` from releases
+2. Extract to desired folder
+3. Run `DictaPilot.exe`
+4. Set `GROQ_API_KEY` in `.env` or environment
 
+### macOS
+1. Download `DictaPilot-macos-x64.zip` from releases
+2. Extract and move `DictaPilot.app` to `/Applications`
+3. Run from Applications or terminal
+4. Set `GROQ_API_KEY` in environment
 
+### Linux
+1. Download `DictaPilot-x86_64.AppImage`
+2. Make executable: `chmod +x DictaPilot-x86_64.AppImage`
+3. Run: `./DictaPilot-x86_64.AppImage`
+4. Set `GROQ_API_KEY` in environment
 
+---
 
+## Building from Source
 
+### Prerequisites
 
-# DictaPilot
-# DictaPilot
+```bash
+pip install pyinstaller
+```
+
+### Windows
+
+```powershell
+# PowerShell
+.\packaging\build_windows.ps1
+# Output: dist\DictaPilot-windows-x64.zip
+```
+
+### macOS
+
+```bash
+chmod +x packaging/build_macos.sh
+./packaging/build_macos.sh
+# Output: dist/DictaPilot-macos-x64.zip
+```
+
+### Linux
+
+```bash
+chmod +x packaging/build_linux.sh
+./packaging/build_linux.sh
+# Output: dist/DictaPilot-x86_64.AppImage
+```
+
+Or build .deb package:
+
+```bash
+./packaging/build_deb.sh
+# Output: dist/dictapilot_*.deb
+```
+
+---
+
+## Project Structure
+
+```
+DictaPilot/
+├── app.py              # Main entrypoint
+├── smart_editor.py     # Smart dictation logic
+├── paste_utils.py      # Cross-platform text injection
+├── x11_backend.py      # Linux X11 input
+├── requirements.txt    # Python dependencies
+├── docs/               # Demo media
+│   ├── demo.gif
+│   └── demo.mp4
+├── packaging/          # Build scripts
+│   ├── DictaPilot.spec
+│   ├── build_windows.ps1
+│   ├── build_macos.sh
+│   ├── build_linux.sh
+│   └── build_deb.sh
+├── .github/
+│   └── workflows/
+│       ├── ci.yml
+│       └── release.yml
+└── LICENSE
+```
+
+---
+
+## Troubleshooting
+
+### Linux
+- Run as normal user (avoid `sudo`)
+- Install `xdotool` for fallback: `sudo apt install xdotool`
+- Force backends: `HOTKEY_BACKEND=x11`, `PASTE_BACKEND=x11`
+
+### macOS
+- Grant **Accessibility** permissions to Terminal
+- Auto-backend: `pynput` → `keyboard`
+
+### General
+- Audio input errors: Check microphone permissions
+- Groq errors: Verify `GROQ_API_KEY` is valid
+
+---
+
+## Testing
+
+```bash
+pip install pytest
+pytest -q
+```
+
+---
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.
+
+---
+
+**Part of the BridgeMind Vibeathon**  
+**Developer:** Rehan

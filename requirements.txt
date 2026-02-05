@@ -5,3 +5,7 @@ numpy
 keyboard
 pyperclip
 python-dotenv
+pynput
+pystray
+Pillow
+pyinstaller
