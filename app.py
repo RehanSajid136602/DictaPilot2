@@ -1,7 +1,11 @@
 """
 DictaPilot - Cross-platform press-and-hold dictation with smart editing.
 
+Original by: Rohan Sharvesh
+Fork maintained by: Rehan
+
 MIT License
+Copyright (c) 2026 Rohan Sharvesh
 Copyright (c) 2026 Rehan
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -38,7 +42,15 @@ from tkinter import ttk
 from tkinter import font as tkfont
 from dotenv import load_dotenv
 from paste_utils import paste_text
-from smart_editor import TranscriptState, smart_update_state
+from smart_editor import (
+    TranscriptState,
+    smart_update_state,
+    llm_refine,
+    sync_state_to_output,
+    is_transform_command,
+    DICTATION_MODE,
+    CLEANUP_LEVEL,
+)
 from transcription_store import add_transcription, get_storage_info, export_all_to_text
 
 # load environment variables from .env (if present)
@@ -48,6 +60,8 @@ try:
     from groq import Groq
 except Exception:
     Groq = None
+
+_GROQ_CLIENT = None
 
 API_KEY = os.getenv("GROQ_API_KEY")
 HOTKEY = os.getenv("HOTKEY", "f9")  # default hotkey: F9 (press-and-hold)
@@ -67,6 +81,7 @@ PASTE_BACKEND = os.getenv("PASTE_BACKEND", "auto").strip().lower()
 HOTKEY_BACKEND = os.getenv("HOTKEY_BACKEND", "auto").strip().lower()
 RESET_TRANSCRIPT_EACH_RECORDING = _env_flag("RESET_TRANSCRIPT_EACH_RECORDING", "1")
 LLM_ALWAYS_CLEAN = _env_flag("LLM_ALWAYS_CLEAN", "1")
+INSTANT_REFINE = _env_flag("INSTANT_REFINE", "1")
 if SMART_MODE not in {"heuristic", "llm"}:
     SMART_MODE = "llm"
 if PASTE_MODE not in {"delta", "full"}:
@@ -77,8 +92,17 @@ if HOTKEY_BACKEND not in {"auto", "keyboard", "pynput", "x11"}:
     HOTKEY_BACKEND = "auto"
 
 # audio defaults
-SR = 44100
-CHANNELS = 1
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)).strip())
+    except Exception:
+        return default
+
+
+SR = _env_int("SAMPLE_RATE", 16000)
+CHANNELS = _env_int("CHANNELS", 1)
+TRIM_SILENCE = _env_flag("TRIM_SILENCE", "1")
+SILENCE_THRESHOLD = float(os.getenv("SILENCE_THRESHOLD", "0.02"))
 
 
 def _hotkey_token_for_pynput(hotkey: str, pynput_keyboard):
@@ -238,6 +262,7 @@ class Recorder:
     def __init__(self, samplerate=SR, channels=CHANNELS):
         self.sr = samplerate
         self.channels = channels
+        self._active_sr = samplerate
         self._frames = []
         self._rec_thread = None
         self._running = threading.Event()
@@ -256,16 +281,30 @@ class Recorder:
         self._started_event.clear()
         self._running.set()
         def _run():
-            try:
-                with sd.InputStream(samplerate=self.sr, channels=self.channels, callback=self._callback):
-                    # signal that the input stream opened successfully
-                    self._started_event.set()
-                    while self._running.is_set():
-                        sd.sleep(100)
-            except Exception as e:
-                # capture any device/opening errors
-                self.last_error = str(e)
-                self._running.clear()
+            errors = []
+            candidates = []
+            for candidate in (self.sr, 16000, 44100, 48000):
+                if candidate not in candidates:
+                    candidates.append(candidate)
+
+            for candidate in candidates:
+                try:
+                    with sd.InputStream(samplerate=candidate, channels=self.channels, callback=self._callback):
+                        self._active_sr = candidate
+                        # signal that the input stream opened successfully
+                        self._started_event.set()
+                        while self._running.is_set():
+                            sd.sleep(100)
+                        return
+                except Exception as e:
+                    errors.append(f"{candidate}Hz: {e}")
+                    self.last_error = str(e)
+                    self._frames = []
+                    continue
+
+            if errors:
+                self.last_error = " | ".join(errors)
+            self._running.clear()
 
         self._rec_thread = threading.Thread(target=_run, daemon=True)
         self._rec_thread.start()
@@ -279,8 +318,12 @@ class Recorder:
         if not self._frames:
             raise RuntimeError("No audio recorded")
         data = np.concatenate(self._frames, axis=0)
+        if TRIM_SILENCE:
+            data = _trim_silence(data, SILENCE_THRESHOLD)
+            if data.size == 0:
+                raise RuntimeError("No audio detected after trimming")
         # ensure shape (n, channels)
-        sf.write(outpath, data, self.sr)
+        sf.write(outpath, data, self._active_sr)
         return outpath
 
 
@@ -290,7 +333,10 @@ def transcribe_with_groq(audio_path: str):
     if not API_KEY:
         raise RuntimeError("Set GROQ_API_KEY environment variable first")
 
-    client = Groq(api_key=API_KEY)
+    global _GROQ_CLIENT
+    if _GROQ_CLIENT is None:
+        _GROQ_CLIENT = Groq(api_key=API_KEY)
+    client = _GROQ_CLIENT
     with open(audio_path, "rb") as f:
         audio_bytes = f.read()
     resp = client.audio.transcriptions.create(
@@ -305,6 +351,20 @@ def transcribe_with_groq(audio_path: str):
     if isinstance(resp, dict):
         return resp.get("text") or resp.get("transcription") or str(resp)
     return str(resp)
+
+
+def _trim_silence(data: np.ndarray, threshold: float) -> np.ndarray:
+    if data.size == 0:
+        return data
+    mono = np.abs(data.mean(axis=1)) if data.ndim > 1 else np.abs(data)
+    peak = float(mono.max())
+    if peak <= 0:
+        return data
+    cutoff = peak * max(threshold, 0.0)
+    idx = np.where(mono > cutoff)[0]
+    if idx.size == 0:
+        return data[:0]
+    return data[idx[0] : idx[-1] + 1]
 
 
 class GUIManager:
@@ -478,12 +538,12 @@ class GUIManager:
 def main():
     def print_banner(hotkey: str):
         banner = r"""
-  __        ___     _                      ____
-  \ \      / / |__ (_)___ _ __   ___ _ __ / ___|_ __ ___   __ _
-   \ \ /\ / /| '_ \| / __| '_ \ / _ \ '__| |  _| '__/ _ \ / _` |
-    \ V  V / | | | | \__ \ |_) |  __/ |  | |_| | | | (_) | (_| |
-     \_/\_/  |_| |_|_|___/ .__/ \___|_|   \____|_|  \___/ \__, |
-                         |_|                                 |_|
+ ____  _ _      _        ____  _ _       _ _   
+|  _ \(_) |    | |      |  _ \(_) |     | | |  
+| | | |_| | ___| |_ __ _| |_) || | ___  | | |_ 
+| | | | | |/ __| __/ _` |  ___/ | |/ _ \ | | __|
+| |_| | | | (__| || (_| | |   | | | (_) || | |_ 
+|____/|_|_|\___|\__\__,_|_|   |_|_|\___/ |_|\__|
 """
         print(banner)
         print("DictaPilot")
@@ -500,6 +560,9 @@ def main():
             print(f"LLM cleanup: {cleanup_mode} (chat_model={GROQ_CHAT_MODEL})")
         print(f"Transcription model: {GROQ_WHISPER_MODEL}")
         print(f"Hotkey backend preference: {HOTKEY_BACKEND}")
+        print(f"Dictation mode: {DICTATION_MODE} (cleanup={CLEANUP_LEVEL})")
+        print(f"Audio: {SR}Hz, channels={CHANNELS}, trim_silence={'on' if TRIM_SILENCE else 'off'}")
+        print(f"Instant refine: {'on' if INSTANT_REFINE else 'off'}")
         if SMART_EDIT and RESET_TRANSCRIPT_EACH_RECORDING:
             print("Transcript reset mode: per recording")
         elif SMART_EDIT:
@@ -570,29 +633,31 @@ def main():
                     text = "(no transcription returned)"
                 print("Transcription:\n", text)
 
-                prev_out = ""
-                new_out = text
-                action = "append"
-                if SMART_EDIT:
-                    prev_out, new_out, action = smart_update_state(transcript_state, text, SMART_MODE)
-                    print(f"Smart action: {action}")
-                    print("Updated transcript:\n", new_out if new_out else "(empty)")
+                prev_out = transcript_state.output_text
+                fast_out = text
+                fast_action = "append"
 
-                # Save transcription to storage
-                add_transcription(text, new_out, action)
-                print(f"Transcription saved to storage")
+                if SMART_EDIT:
+                    prev_out, fast_out, fast_action = smart_update_state(
+                        transcript_state,
+                        text,
+                        mode="heuristic",
+                        allow_llm=False,
+                    )
+                    print(f"Fast action: {fast_action}")
+                    print("Fast transcript:\n", fast_out if fast_out else "(empty)")
 
                 # copy to clipboard (prefer pyperclip, fallback to tkinter clipboard)
                 try:
                     import pyperclip
-                    pyperclip.copy(new_out)
+                    pyperclip.copy(fast_out)
                 except Exception:
                     try:
                         # use the GUI root for clipboard operations (must be main thread)
                         def _cb():
                             try:
                                 gui.root.clipboard_clear()
-                                gui.root.clipboard_append(new_out)
+                                gui.root.clipboard_append(fast_out)
                                 gui.root.update()
                             except Exception:
                                 pass
@@ -606,17 +671,17 @@ def main():
                 except Exception:
                     pass
 
-                # small delay to allow focus handoff, then paste
+                # small delay to allow focus handoff, then paste fast output
                 time.sleep(0.25)
                 paste_error = None
                 try:
                     selected_paste_mode = PASTE_MODE if SMART_EDIT else "delta"
-                    paste_text(prev_out, new_out, selected_paste_mode, backend=PASTE_BACKEND)
+                    paste_text(prev_out, fast_out, selected_paste_mode, backend=PASTE_BACKEND)
                 except Exception as ex:
                     paste_error = ex
                     try:
                         # fallback: force full replace for better compatibility
-                        paste_text("", new_out, "full", backend=PASTE_BACKEND)
+                        paste_text("", fast_out, "full", backend=PASTE_BACKEND)
                         paste_error = None
                     except Exception as ex2:
                         paste_error = RuntimeError(f"{ex}; fallback full paste failed: {ex2}")
@@ -628,9 +693,37 @@ def main():
                     except Exception:
                         pass
 
+                # optional refinement pass (LLM) to improve quality
+                refined_out = fast_out
+                refined_action = fast_action
+                if SMART_EDIT and INSTANT_REFINE and DICTATION_MODE != "speed" and not is_transform_command(text):
+                    try:
+                        gui.update(("processing", "Refining..."))
+                    except Exception:
+                        pass
+                    llm_result = llm_refine(prev_out, text)
+                    if llm_result is not None:
+                        refined_out, refined_action = llm_result
+                        if refined_out != fast_out:
+                            with transcript_state.lock:
+                                current_out = transcript_state.output_text
+                            if current_out == fast_out:
+                                sync_state_to_output(transcript_state, fast_out, refined_out)
+                                try:
+                                    paste_text(fast_out, refined_out, "delta", backend=PASTE_BACKEND)
+                                except Exception:
+                                    try:
+                                        paste_text("", refined_out, "full", backend=PASTE_BACKEND)
+                                    except Exception:
+                                        pass
+
+                # Save transcription to storage (final output)
+                add_transcription(text, refined_out, refined_action)
+                print("Transcription saved to storage")
+
                 # show done text briefly after paste
                 try:
-                    output_for_popup = new_out if new_out else "(empty transcript)"
+                    output_for_popup = refined_out if refined_out else "(empty transcript)"
                     snippet = output_for_popup if len(output_for_popup) <= 300 else output_for_popup[:300] + "..."
                     gui.show(("done", snippet))
                 except Exception:

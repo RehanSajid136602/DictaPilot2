@@ -19,6 +19,27 @@
 
 ---
 
+## About This Fork
+
+This is a maintained fork of the original DictaPilot project by [Rohan Sharvesh](https://github.com/RohanSharvesh).
+
+**Original repository:** https://github.com/RohanSharvesh/DictaPilot
+
+This fork includes additional features, bug fixes, and improvements. All credit goes to the original author for the core design and architecture.
+
+### Improvements in This Fork
+
+- Transcription storage with JSON persistence
+- CLI tools (`--list`, `--stats`, `--search`, `--export`)
+- Enhanced smart editor with better replace pattern handling
+- Improved LLM prompts and edge case handling
+- Better clear/ignore detection
+- Per-app context/profiles support (`app_context.py`)
+- GitHub Actions CI/CD workflows
+- Packaging scripts for Windows/macOS/Linux
+
+---
+
 ## Demo (10–20 sec)
 
 ![DictaPilot Demo](docs/demo.gif)

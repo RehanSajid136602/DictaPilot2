@@ -2,7 +2,11 @@
 DictaPilot system tray module
 Provides system tray icon with menu and minimal settings dialog
 
+Original by: Rohan Sharvesh
+Fork maintained by: Rehan
+
 MIT License
+Copyright (c) 2026 Rohan Sharvesh
 Copyright (c) 2026 Rehan
 
 Permission is hereby granted, free of charge, to any person obtaining a copy

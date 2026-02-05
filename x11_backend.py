@@ -2,7 +2,11 @@
 DictaPilot X11 Backend
 Linux X11 input backend for hotkey detection and text injection.
 
+Original by: Rohan Sharvesh
+Fork maintained by: Rehan
+
 MIT License
+Copyright (c) 2026 Rohan Sharvesh
 Copyright (c) 2026 Rehan
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
