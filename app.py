@@ -268,18 +268,28 @@ class Recorder:
         self._running = threading.Event()
         self.last_error = None
         self._started_event = threading.Event()
+        self.amplitude_callback = None
 
     def _callback(self, indata, frames, time_info, status):
         if status:
             print("Recording status:", status, file=sys.stderr)
         # copy because indata is reused by sounddevice
         self._frames.append(indata.copy())
+        
+        if self.amplitude_callback:
+            # Calculate RMS amplitude for visualization
+            try:
+                rms = np.sqrt(np.mean(indata**2))
+                self.amplitude_callback(float(rms))
+            except Exception:
+                pass
 
-    def start(self):
+    def start(self, amplitude_callback=None):
         self._frames = []
         self.last_error = None
         self._started_event.clear()
         self._running.set()
+        self.amplitude_callback = amplitude_callback
         def _run():
             errors = []
             candidates = []
@@ -370,166 +380,219 @@ def _trim_silence(data: np.ndarray, threshold: float) -> np.ndarray:
 class GUIManager:
     def __init__(self):
         self._queue = queue.Queue()
+        self._audio_queue = queue.Queue()
         self.root = tk.Tk()
-        # keep the root window hidden; use Toplevel windows for status
-        self.root.withdraw()
-        self._window = None
-        self._label = None
-        self._mode = "textpopup"
+        # Ensure window is persistent and always on top
+        try:
+            self.root.overrideredirect(True)
+        except Exception:
+            pass
+        self.root.wm_attributes("-topmost", True)
+        
+        self._mode = "idle"
+        self._display_text = "Ready"
         self._canvas = None
-        self._text_id = None
-        self._font_obj = None
+        self._font_header = tkfont.Font(family=None, size=9, weight="bold")
+        self._font_content = tkfont.Font(family=None, size=10, weight="normal")
+        self._amplitudes = [0.0] * 6  
+        self._current_heights = [0.0] * 6  
+        
+        # Window Dragging State
+        self._drag_data = {"x": 0, "y": 0}
+        self._btn_hover = None
+        
+        # Initial window setup
+        self._setup_window()
         self._poll()
+
+    def _setup_window(self):
+        transparent_key = "#123456"
+        bg_color = "#0f172a" 
+        
+        try:
+            self.root.configure(bg=transparent_key)
+            self.root.wm_attributes("-transparentcolor", transparent_key)
+        except Exception:
+            self.root.configure(bg=bg_color)
+
+        width = 260
+        height = 140 
+        if self._canvas:
+            self._canvas.destroy()
+            
+        self._canvas = tk.Canvas(self.root, width=width, height=height, highlightthickness=0, bg=transparent_key)
+        self._canvas.pack()
+        
+        # Bind events
+        self._canvas.bind("<Button-1>", self._on_drag_start)
+        self._canvas.bind("<B1-Motion>", self._on_drag_motion)
+        self._canvas.bind("<Motion>", self._on_mouse_move)
+        self._canvas.bind("<ButtonRelease-1>", self._on_click_release)
+        self.root.bind("<Map>", self._on_window_map)
+        
+        # Position TOP-center
+        self.root.update_idletasks()
+        ws = self.root.winfo_screenwidth()
+        x = (ws // 2) - (width // 2)
+        y = 30
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
+        
+        self._render_frame()
+
+    def _on_window_map(self, event):
+        # Restore borderless state when restored from taskbar
+        try:
+            self.root.overrideredirect(True)
+        except Exception:
+            pass
+
+    def _on_drag_start(self, event):
+        btn = self._get_button_at(event.x, event.y)
+        if btn: return
+            
+        self._drag_data["x"] = event.x
+        self._drag_data["y"] = event.y
+        self._canvas.config(cursor="fleur")
+
+    def _on_drag_motion(self, event):
+        if self._canvas.cget("cursor") != "fleur": return
+        deltax = event.x - self._drag_data["x"]
+        deltay = event.y - self._drag_data["y"]
+        x = self.root.winfo_x() + deltax
+        y = self.root.winfo_y() + deltay
+        self.root.geometry(f"+{x}+{y}")
+
+    def _on_mouse_move(self, event):
+        btn = self._get_button_at(event.x, event.y)
+        if btn != self._btn_hover:
+            self._btn_hover = btn
+            self._render_frame()
+            
+        if btn: self._canvas.config(cursor="hand2")
+        else: self._canvas.config(cursor="")
+
+    def _on_click_release(self, event):
+        self._canvas.config(cursor="")
+        btn = self._get_button_at(event.x, event.y)
+        if btn == "close": self.root.quit()
+        elif btn == "min":
+            self.root.overrideredirect(False)
+            self.root.iconify()
+
+    def _get_button_at(self, x, y):
+        # Coordinates based on width=260
+        if 235 <= x <= 255 and 5 <= y <= 25: return "close"
+        if 210 <= x <= 230 and 5 <= y <= 25: return "min"
+        return None
 
     def _poll(self):
         try:
             while True:
                 cmd, arg = self._queue.get_nowait()
-                if cmd == "show":
-                    self._do_show(arg)
-                elif cmd == "update":
-                    self._do_update(arg)
+                if cmd == "show" or cmd == "update":
+                    mode = "textpopup"
+                    body = arg
+                    if isinstance(arg, (tuple, list)):
+                        mode, body = arg[0], arg[1]
+                    self._mode = mode
+                    self._display_text = body
                 elif cmd == "close":
-                    self._do_close()
+                    self._mode = "idle"
+                    self._display_text = "Ready"
         except queue.Empty:
             pass
-        self.root.after(100, self._poll)
 
-    def _do_show(self, text: str):
-        # Simplified dark rounded text-only popup placed bottom-center.
-        # Accept either a plain text or a (mode, text) tuple; we only use the text here.
-        body = text[1] if (isinstance(text, (tuple, list)) and len(text) > 1) else text
-
-        if self._window:
-            self._do_update(body)
-            return
-
-        self._window = tk.Toplevel(self.root)
+        # Process audio levels
         try:
-            self._window.overrideredirect(True)
-        except Exception:
+            while True:
+                amp = self._audio_queue.get_nowait()
+                self._amplitudes.pop(0)
+                self._amplitudes.append(amp)
+        except queue.Empty:
             pass
-        self._window.wm_attributes("-topmost", True)
+        
+        # Animation Tick
+        decay = 0.12 
+        rise = 0.6   
+        sensitivities = [0.6, 1.1, 1.6, 1.6, 1.1, 0.6]
+        
+        for i in range(6):
+            if self._mode == "record":
+                target = self._amplitudes[i] * sensitivities[i] * 90.0
+            elif self._mode == "idle":
+                import math
+                target = (math.sin(time.time() * 2 + i) + 1) * 0.04
+            else:
+                target = 0.05 
+                
+            diff = target - self._current_heights[i]
+            if diff > 0:
+                self._current_heights[i] += diff * rise
+            else:
+                self._current_heights[i] += diff * decay
 
-        # Create a unique transparent color key for the window background
-        transparent_key = "#123456"
-        bg_color = "#222222"
-        fg_color = "#ffffff"
-        pad_x = 18
-        pad_y = 10
+        self._render_frame()
+        self.root.after(20, self._poll)
 
-        # set the window background to the transparent key
-        try:
-            self._window.configure(bg=transparent_key)
-        except Exception:
-            pass
+    def _draw_rounded_rect(self, x, y, w, h, color, r=15):
+        self._canvas.create_rectangle(x+r, y, x+w-r, y+h, fill=color, outline=color)
+        self._canvas.create_rectangle(x, y+r, x+w, y+h-r, fill=color, outline=color)
+        self._canvas.create_oval(x, y, x+2*r, y+2*r, fill=color, outline=color)
+        self._canvas.create_oval(x+w-2*r, y, x+w, y+2*r, fill=color, outline=color)
+        self._canvas.create_oval(x, y+h-2*r, x+2*r, y+h, fill=color, outline=color)
+        self._canvas.create_oval(x+w-2*r, y+h-2*r, x+w, y+h, fill=color, outline=color)
 
-        # Canvas will draw the rounded rectangle and the text
-        font_obj = tkfont.Font(family=None, size=11)
-        text_width = font_obj.measure(body)
-        text_height = font_obj.metrics("linespace")
-        width = text_width + pad_x * 2
-        height = text_height + pad_y * 2
-
-        canvas = tk.Canvas(self._window, width=width, height=height, highlightthickness=0, bg=transparent_key)
-        canvas.pack()
-
-        # draw rounded rectangle using ovals and rectangles
-        r = 12
-        color = bg_color
-        # center rectangle parts
-        canvas.create_rectangle(r, 0, width - r, height, fill=color, outline=color)
-        canvas.create_rectangle(0, r, width, height - r, fill=color, outline=color)
-        # four corner ovals
-        canvas.create_oval(0, 0, 2 * r, 2 * r, fill=color, outline=color)
-        canvas.create_oval(width - 2 * r, 0, width, 2 * r, fill=color, outline=color)
-        canvas.create_oval(0, height - 2 * r, 2 * r, height, fill=color, outline=color)
-        canvas.create_oval(width - 2 * r, height - 2 * r, width, height, fill=color, outline=color)
-
-        # draw text
-        self._text_id = canvas.create_text(width // 2, height // 2, text=body, fill=fg_color, font=font_obj)
-
-        # try to make the background transparent (Windows supports -transparentcolor)
-        try:
-            self._window.wm_attributes("-transparentcolor", transparent_key)
-        except Exception:
-            try:
-                self._window.configure(bg=color)
-            except Exception:
-                pass
-
-        # position bottom-center
-        self._window.update_idletasks()
-        ws = self._window.winfo_screenwidth()
-        hs = self._window.winfo_screenheight()
-        x = (ws // 2) - (width // 2)
-        y = hs - height - 60
-        self._window.geometry(f"{width}x{height}+{x}+{y}")
-        self._mode = "textpopup"
-        self._canvas = canvas
-        self._font_obj = font_obj
-
-    def _do_update(self, text: str):
-        # accept either a plain text or a (mode, text) tuple
-        mode = None
-        body = text
-        if isinstance(text, tuple) or isinstance(text, list):
-            mode, body = text[0], text[1]
-
-        if mode and mode != self._mode:
-            # recreate window with new mode
-            self._do_close()
-            self._do_show((mode, body))
-            return
-
-        if not self._window or not self._canvas or not self._font_obj:
-            self._do_show((mode, body) if mode else body)
-            return
-
-        body = str(body or "")
-        text_width = self._font_obj.measure(body)
-        text_height = self._font_obj.metrics("linespace")
-        pad_x = 18
-        pad_y = 10
-        width = text_width + pad_x * 2
-        height = text_height + pad_y * 2
-        self._canvas.config(width=width, height=height)
-
-        # redraw rounded rect and text with the new dimensions
+    def _render_frame(self):
+        if not self._canvas: return
         self._canvas.delete("all")
-        r = 12
-        color = "#222222"
-        self._canvas.create_rectangle(r, 0, width - r, height, fill=color, outline=color)
-        self._canvas.create_rectangle(0, r, width, height - r, fill=color, outline=color)
-        self._canvas.create_oval(0, 0, 2 * r, 2 * r, fill=color, outline=color)
-        self._canvas.create_oval(width - 2 * r, 0, width, 2 * r, fill=color, outline=color)
-        self._canvas.create_oval(0, height - 2 * r, 2 * r, height, fill=color, outline=color)
-        self._canvas.create_oval(width - 2 * r, height - 2 * r, width, height, fill=color, outline=color)
-        self._text_id = self._canvas.create_text(
-            width // 2, height // 2, text=body, fill="#ffffff", font=self._font_obj
-        )
+        
+        w = int(self._canvas.cget("width"))
+        h = int(self._canvas.cget("height"))
+        
+        # Background
+        self._draw_rounded_rect(0, 0, w, h, "#0f172a") 
+        
+        # Action Buttons
+        close_color = "#ef4444" if self._btn_hover == "close" else "#475569"
+        min_color = "#38bdf8" if self._btn_hover == "min" else "#475569"
+        self._canvas.create_text(245, 15, text="✕", fill=close_color, font=("Helvetica", 10, "bold"))
+        self._canvas.create_text(220, 15, text="—", fill=min_color, font=("Helvetica", 10, "bold"))
 
-        self._window.update_idletasks()
-        ws = self._window.winfo_screenwidth()
-        hs = self._window.winfo_screenheight()
-        x = (ws // 2) - (width // 2)
-        y = hs - height - 60
-        self._window.geometry(f"{width}x{height}+{x}+{y}")
+        # Zone A: Branding
+        status_map = {"record": ("RECORDING", "#38bdf8"), "processing": ("THINKING...", "#fbbf24"), "done": ("COMPLETED", "#4ade80"), "idle": ("IDLE", "#94a3b8")}
+        status_text, status_color = status_map.get(self._mode, ("READY", "#94a3b8"))
+        self._canvas.create_text(w//2, 20, text="DICTAPILOT", fill="#f1f5f9", font=self._font_header)
+        self._canvas.create_text(w//2, 35, text=status_text, fill=status_color, font=("Helvetica", 7, "bold"))
 
-    def _do_close(self):
-        if self._window:
-            try:
-                self._window.destroy()
-            except Exception:
-                pass
-            self._window = None
-            self._label = None
+        # Zone B: Visualizer
+        mid_y = 75
+        bar_w, gap, max_h = 16, 12, 45
+        total_w = 6 * (bar_w + gap) - gap
+        start_x = (w - total_w) // 2
+        visual_color = "#38bdf8" if self._mode == "record" else "#1e293b"
+        glow_color = "#0c4a6e" if self._mode == "record" else "#0f172a"
+        for i in range(6):
+            hv = max(4, int(min(1.0, self._current_heights[i]) * max_h))
+            x = start_x + i * (bar_w + gap)
+            self._canvas.create_line(x+bar_w/2, mid_y-hv/2-2, x+bar_w/2, mid_y+hv/2+2, fill=glow_color, width=bar_w+4, capstyle="round")
+            self._canvas.create_line(x+bar_w/2, mid_y-hv/2, x+bar_w/2, mid_y+hv/2, fill=visual_color, width=bar_w, capstyle="round")
+
+        # Zone C: Text
+        self._draw_rounded_rect(10, 100, w-20, 30, "#1e293b", r=8)
+        msg = self._display_text
+        if self._mode == "record": msg = "Listening..."
+        elif self._mode == "processing": msg = "Analyzing audio..."
+        if len(msg) > 35: msg = msg[:32] + "..."
+        self._canvas.create_text(w//2, 115, text=msg, fill="#cbd5e1", font=self._font_content)
 
     def show(self, text: str):
         self._queue.put(("show", text))
 
     def update(self, text: str):
         self._queue.put(("update", text))
+
+    def update_amplitude(self, amp: float):
+        self._audio_queue.put(amp)
 
     def close(self):
         self._queue.put(("close", None))
@@ -596,7 +659,7 @@ def main():
         except Exception:
             pass
         recorder.last_error = None
-        recorder.start()
+        recorder.start(amplitude_callback=gui.update_amplitude)
         # wait for the input stream to open or error
         started = recorder._started_event.wait(timeout=1.0)
         if not started:
@@ -729,10 +792,10 @@ def main():
                 except Exception:
                     pass
 
-                # keep the done window visible briefly then close
-                time.sleep(1.2)
+                # keep the done window visible briefly then return to idle
+                time.sleep(1.5)
                 try:
-                    gui.close()
+                    gui.show(("idle", "Ready"))
                 except Exception:
                     pass
 
